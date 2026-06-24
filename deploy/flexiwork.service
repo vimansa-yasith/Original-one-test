@@ -1,0 +1,16 @@
+[Unit]
+Description=FlexiWork backend (Spring Boot)
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=flexiwork
+WorkingDirectory=/opt/flexiwork
+EnvironmentFile=/opt/flexiwork/.env
+ExecStart=/usr/bin/java -jar /opt/flexiwork/app.jar --spring.profiles.active=prod
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
