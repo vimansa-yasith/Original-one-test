@@ -5,9 +5,9 @@ spring:
     active: dev
 
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/flexiwork}
-    username: ${SPRING_DATASOURCE_USERNAME:root}
-    password: ${SPRING_DATASOURCE_PASSWORD:}  # local dev default; override via DB_USERNAME/DB_PASSWORD env vars in any shared/prod environment
+    url: jdbc:${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}  # local dev default; override via DB_USERNAME/DB_PASSWORD env vars in any shared/prod environment
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
