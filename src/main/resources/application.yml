@@ -5,9 +5,9 @@ spring:
     active: dev
 
   datasource:
-    url: jdbc:mysql://${MYSQLHOST}:${MYSQLPORT}/${MYSQLDATABASE}
-    username:${MYSQLUSER}
-    password: ${MYSQLPASSWORD}  # local dev default; override via DB_USERNAME/DB_PASSWORD env vars in any shared/prod environment
+    url: jdbc:mysql://${{MySQL.MYSQLHOST}}:${{MySQL.MYSQLPORT}}/${{MySQL.MYSQLDATABASE}}
+    username: ${{MySQL.MYSQLUSER}}
+    password: ${{MySQL.MYSQLPASSWORD}}  # local dev default; override via DB_USERNAME/DB_PASSWORD env vars in any shared/prod environment
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
