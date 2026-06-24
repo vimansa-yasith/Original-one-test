@@ -15,4 +15,4 @@ COPY --from=build /build/target/flexiwork.jar app.jar
 
 # Railway injects PORT; application.yml binds server.port to it.
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar", "--spring.datasource.url=jdbc:mysql://${SPRING_DATASOURCE_URL:mysql.railway.internal:3306/railway}", "--spring.datasource.username=${SPRING_DATASOURCE_USERNAME:root}", "--spring.datasource.password=${SPRING_DATASOURCE_PASSWORD:PqANdDdVRGtHNtHhErREcbmUcVWFcjBf}"]
