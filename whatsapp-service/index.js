@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
 
@@ -11,28 +11,37 @@ let isReady = false;
 let pairingCodeRequested = false; 
 
 async function connectToWhatsApp() {
-    
-    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_v3');
+    // 💡 පරණ කරදරකාරී Junk සෙෂන්ස් අයින් වෙන්න අලුත්ම Clean ෆෝල්ඩර් එකක් දුන්නා
+    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_v4');
+
+    // 📡 [පිළියම 1] - වට්ස්ඇප් එකෙන් බ්ලොක් නොවෙන්න ලයිව් සර්වර් එකෙන්ම අලුත්ම වර්ෂන් එක ලබාගැනීම
+    let version = [2, 3000, 1015, 0]; // Fallback version
+    try {
+        const latest = await fetchLatestBaileysVersion();
+        version = latest.version;
+        console.log(`📡 [System] Using WhatsApp Web Version: v${version.join('.')}`);
+    } catch (err) {
+        console.log('⚠️ Could not fetch latest WA version, using secure fallback.');
+    }
 
     sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false, 
-        
-        browser: ['Mac OS', 'Chrome', '124.0.0.0'],
+        browser: ['Mac OS', 'Chrome', '124.0.0.0'], // Stable User-Agent
         logger: pino({ level: 'silent' })
     });
 
-  
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        
+        // 🎯 වට්ස්ඇප් එක ලින්ක් වෙන්න ලෑස්ති වූ සැනින් පිරිසිදුව කෝඩ් එක ඉල්ලීම
         if (qr && !sock.authState.creds.registered && !pairingCodeRequested) {
             pairingCodeRequested = true;
             const myPhoneNumber = '94719075355'.replace(/[^0-9]/g, ''); 
             
             try {
-                console.log(`\n📡 [System] WhatsApp connection stable. Requesting code for: ${myPhoneNumber}`);
+                console.log(`\n📡 [System] Connection stable. Requesting code for: ${myPhoneNumber}`);
                 const code = await sock.requestPairingCode(myPhoneNumber);
                 
                 console.log(`\n======================================================`);
@@ -53,11 +62,22 @@ async function connectToWhatsApp() {
 
         if (connection === 'close') {
             isReady = false;
-            pairingCodeRequested = false; 
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('⚠️ WhatsApp connection closed. Reconnecting...', shouldReconnect);
+            pairingCodeRequested = false;
+            
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
+            console.log(`⚠️ WhatsApp connection closed (Status: ${statusCode}). Reconnecting in 5s...`);
+            
+            // 🔒 [පිළියම 2] - පරණ ලිස්නර්ස් අයින් කරලා සොකට් එක ක්ලීන් කිරීම
+            sock.ev.removeAllListeners('connection.update');
+            sock.ev.removeAllListeners('creds.update');
+            
+            // ⏱️ [පිළියම 3] - වට්ස්ඇප් සර්වර් එක ස්පෑම් නොවෙන්න තත්පර 5ක ඩිලේ එකක් තැබීම
             if (shouldReconnect) {
-                connectToWhatsApp(); 
+                setTimeout(() => {
+                    connectToWhatsApp(); 
+                }, 5000);
             }
         } else if (connection === 'open') {
             isReady = true;
@@ -71,7 +91,7 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// ── REST API
+// ── REST API ──────────────────────────────────────────────────────────────────
 
 app.post('/send', async (req, res) => {
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
