@@ -1,6 +1,6 @@
 // Small fetch wrapper: attaches the JWT, parses JSON, surfaces the backend's error envelope
 // (including per-field validation errors), and redirects to /login on 401.
-const BACKEND_URL = 'backend-production-e54f.up.railway.app';
+const BACKEND_URL = 'https://backend-production-e54f.up.railway.app';
 const TOKEN_KEY = 'flexiwork_token';
 
 // "Remember me" decides where the token lives: localStorage survives browser restarts,
