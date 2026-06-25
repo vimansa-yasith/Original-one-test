@@ -1,87 +1,64 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
 
 const app = express();
 app.use(express.json());
 
+
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
 let sock = null;
 let isReady = false;
-let pairingCodeRequested = false; 
+let pairingCodeRequested = false;
 
 async function connectToWhatsApp() {
-    // 💡 පරණ කරදරකාරී Junk සෙෂන්ස් අයින් වෙන්න අලුත්ම Clean ෆෝල්ඩර් එකක් දුන්නා
     const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_v4');
 
-    // 📡 [පිළියම 1] - වට්ස්ඇප් එකෙන් බ්ලොක් නොවෙන්න ලයිව් සර්වර් එකෙන්ම අලුත්ම වර්ෂන් එක ලබාගැනීම
-    let version = [2, 3000, 1015, 0]; // Fallback version
-    try {
-        const latest = await fetchLatestBaileysVersion();
-        version = latest.version;
-        console.log(`📡 [System] Using WhatsApp Web Version: v${version.join('.')}`);
-    } catch (err) {
-        console.log('⚠️ Could not fetch latest WA version, using secure fallback.');
-    }
-
     sock = makeWASocket({
-        version,
         auth: state,
         printQRInTerminal: false, 
-        browser: ['Mac OS', 'Chrome', '124.0.0.0'], // Stable User-Agent
+        browser: ["Chromium", "Ubuntu", "3.0"], 
         logger: pino({ level: 'silent' })
     });
 
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        // 🎯 වට්ස්ඇප් එක ලින්ක් වෙන්න ලෑස්ති වූ සැනින් පිරිසිදුව කෝඩ් එක ඉල්ලීම
-        if (qr && !sock.authState.creds.registered && !pairingCodeRequested) {
-            pairingCodeRequested = true;
-            const myPhoneNumber = '94719075355'.replace(/[^0-9]/g, ''); 
-            
+    if (!sock.authState.creds.registered) {
+        setTimeout(async () => {
+            if (pairingCodeRequested) return;
+            const myPhoneNumber = '94711285796'.replace(/[^0-9]/g, ''); 
             try {
-                console.log(`\n📡 [System] Connection stable. Requesting code for: ${myPhoneNumber}`);
+                pairingCodeRequested = true;
+                console.log(`\n📡 [System] Requesting Pairing Code for: ${myPhoneNumber}`);
                 const code = await sock.requestPairingCode(myPhoneNumber);
                 
                 console.log(`\n======================================================`);
                 console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
                 console.log(`------------------------------------------------------`);
-                
                 const formattedCode = code.match(/.{1,4}/g).join('-');
                 console.log(`👉  YOUR CODE IS: [ ${formattedCode.toUpperCase()} ]  👈`);
-                
-                console.log(`------------------------------------------------------`);
-                console.log(`💡 Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
                 console.log(`======================================================\n`);
             } catch (err) {
-                console.error('❌ Failed to generate pairing code:', err.message);
+                console.log('❌ Code Request Pending/Failed:', err.message);
                 pairingCodeRequested = false;
             }
-        }
+        }, 8000);
+    }
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
 
         if (connection === 'close') {
             isReady = false;
-            pairingCodeRequested = false;
-            
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`⚠️ Connection closed (Status: ${statusCode}). Waiting 10s before retry...`);
             
-            console.log(`⚠️ WhatsApp connection closed (Status: ${statusCode}). Reconnecting in 5s...`);
-            
-            // 🔒 [පිළියම 2] - පරණ ලිස්නර්ස් අයින් කරලා සොකට් එක ක්ලීන් කිරීම
             sock.ev.removeAllListeners('connection.update');
             sock.ev.removeAllListeners('creds.update');
             
-            // ⏱️ [පිළියම 3] - වට්ස්ඇප් සර්වර් එක ස්පෑම් නොවෙන්න තත්පර 5ක ඩිලේ එකක් තැබීම
-            if (shouldReconnect) {
-                setTimeout(() => {
-                    connectToWhatsApp(); 
-                }, 5000);
-            }
+            setTimeout(() => {
+                connectToWhatsApp(); 
+            }, 10000);
         } else if (connection === 'open') {
             isReady = true;
-            pairingCodeRequested = false;
             console.log('✅ WhatsApp client ready! FlexiWork can now send messages.');
         }
     });
@@ -91,12 +68,15 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// ── REST API ──────────────────────────────────────────────────────────────────
+
 
 app.post('/send', async (req, res) => {
+    // 1. Security Check
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
+        console.log('❌ Unauthorized request attempt to /send');
         return res.status(401).json({ error: 'Unauthorized' });
     }
+    
     const { to, message } = req.body;
 
     if (!to || !message) {
@@ -107,12 +87,26 @@ app.post('/send', async (req, res) => {
     }
 
     try {
-        const formattedNumber = to.replace(/^\+/, '').replace(/\s+/g, '') + '@s.whatsapp.net';
+        
+        let cleanedNumber = to.replace(/[^0-9]/g, '');
+        
+        if (cleanedNumber.startsWith('0')) {
+            
+            cleanedNumber = '94' + cleanedNumber.substring(1); 
+        } else if (!cleanedNumber.startsWith('94') && cleanedNumber.length === 9) {
+            
+            cleanedNumber = '94' + cleanedNumber;
+        }
+
+        const formattedNumber = cleanedNumber + '@s.whatsapp.net';
+        
+       
         await sock.sendMessage(formattedNumber, { text: message });
-        console.log(`📤 Sent to ${to}`);
+        console.log(`📤 Verification Code successfully sent to: ${cleanedNumber}`);
+        
         res.json({ success: true });
     } catch (err) {
-        console.error(`❌ Failed to send to ${to}:`, err.message);
+        console.error(`❌ Failed to send verification code to ${to}:`, err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -123,6 +117,5 @@ app.get('/status', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log(`\n🚀 FlexiWork WhatsApp service running on http://localhost:${PORT}`);
-    console.log('   Waiting for WhatsApp to initialize...\n');
+    console.log(`\n🚀 FlexiWork WhatsApp service running on port ${PORT}`);
 });
