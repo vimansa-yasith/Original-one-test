@@ -8,26 +8,31 @@ app.use(express.json());
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
 let sock = null;
 let isReady = false;
-let pairingCodeSent = false; 
+let pairingCodeRequested = false; 
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_fresh');
+    
+    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_v3');
 
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false, 
-        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        
+        browser: ['Mac OS', 'Chrome', '124.0.0.0'],
         logger: pino({ level: 'silent' })
     });
 
   
-    if (!sock.authState.creds.registered && !pairingCodeSent) {
-        pairingCodeSent = true; 
-        const myPhoneNumber = '94719075355'.replace(/[^0-9]/g, ''); 
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
         
-        setTimeout(async () => {
+        if (qr && !sock.authState.creds.registered && !pairingCodeRequested) {
+            pairingCodeRequested = true;
+            const myPhoneNumber = '94719075355'.replace(/[^0-9]/g, ''); 
+            
             try {
-                console.log(`\n📡 [System] Requesting Single Pairing Code for: ${myPhoneNumber}`);
+                console.log(`\n📡 [System] WhatsApp connection stable. Requesting code for: ${myPhoneNumber}`);
                 const code = await sock.requestPairingCode(myPhoneNumber);
                 
                 console.log(`\n======================================================`);
@@ -42,16 +47,13 @@ async function connectToWhatsApp() {
                 console.log(`======================================================\n`);
             } catch (err) {
                 console.error('❌ Failed to generate pairing code:', err.message);
-                pairingCodeSent = false; 
+                pairingCodeRequested = false;
             }
-        }, 6000); 
-    }
+        }
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        
         if (connection === 'close') {
             isReady = false;
+            pairingCodeRequested = false; 
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('⚠️ WhatsApp connection closed. Reconnecting...', shouldReconnect);
             if (shouldReconnect) {
@@ -59,7 +61,7 @@ async function connectToWhatsApp() {
             }
         } else if (connection === 'open') {
             isReady = true;
-            pairingCodeSent = false; 
+            pairingCodeRequested = false;
             console.log('✅ WhatsApp client ready! FlexiWork can now send messages.');
         }
     });
@@ -69,7 +71,7 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-
+// ── REST API
 
 app.post('/send', async (req, res) => {
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
