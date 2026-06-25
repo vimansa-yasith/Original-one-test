@@ -19,27 +19,28 @@ async function connectToWhatsApp() {
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false, 
-        logger: pino({ level: 'silent' }) 
+        logger: pino({ level: 'silent' }),
+        
+        browser: ['Ubuntu', 'Chrome', '20.0.04'] 
     });
 
     
     if (!sock.authState.creds.registered) {
-        const myPhoneNumber = '94711285796'; 
+       ැ
+        const myPhoneNumber = '94711285796'.replace(/[^0-9]/g, ''); 
         
-       
         setTimeout(async () => {
             
             const requestNextCode = async () => {
                 if (isReady) return; 
                 
                 const now = Date.now();
-               
                 if (now - lastPairingCodeTime < 45000) return; 
 
                 try {
                     console.log(`\n📡 [System] Requesting 8-digit Pairing Code for: ${myPhoneNumber}`);
                     const code = await sock.requestPairingCode(myPhoneNumber);
-                    lastPairingCodeTime = Date.now();
+                    lastPairingCodeTime = Date.now(); 
                     
                     console.log(`\n======================================================`);
                     console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
@@ -55,10 +56,8 @@ async function connectToWhatsApp() {
                 }
             };
 
-            
             await requestNextCode();
 
-           
             const intervalId = setInterval(async () => {
                 if (isReady || sock.authState.creds.registered) {
                     clearInterval(intervalId); 
@@ -91,9 +90,7 @@ async function connectToWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 }
 
-
 connectToWhatsApp();
-
 
 app.post('/send', async (req, res) => {
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
@@ -109,9 +106,7 @@ app.post('/send', async (req, res) => {
     }
 
     try {
-        
         const formattedNumber = to.replace(/^\+/, '').replace(/\s+/g, '') + '@s.whatsapp.net';
-        
         await sock.sendMessage(formattedNumber, { text: message });
         console.log(`📤 Sent to ${to}`);
         res.json({ success: true });
@@ -120,7 +115,6 @@ app.post('/send', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
 
 app.get('/status', (req, res) => {
     res.json({ ready: isReady });
