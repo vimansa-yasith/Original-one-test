@@ -1,5 +1,4 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const express = require('express');
 
 const app = express();
@@ -23,23 +22,36 @@ const client = new Client({
 });
 
 // First run: print QR code in terminal — scan with WhatsApp once, never again
+let pairingCodeRequested = false;
+
 client.on('qr', async (qr) => {
-  console.log('QR code received, requesting pairing code instead...');
+  if (pairingCodeRequested) return; 
+    
+    console.log('[System] Inside QR event. Canceling terminal QR print...');
+    console.log('[System] Requesting 8-digit Pairing Code from WhatsApp...');
     
     try {
-        // add the phone number for pairing
-        const myPhoneNumber = '94719075355'; 
+        pairingCodeRequested = true;
+        const myPhoneNumber = '94719075355'; //phone number
         
+        // requesting the code directly from whatsapp
         const pairingCode = await client.requestPairingCode(myPhoneNumber);
         
-        console.log(`\n============== WHATSAPP PAIRING CODE ==============`);
-       
+        console.log(`\n======================================================`);
+        console.log(`WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY`);
+        console.log(`------------------------------------------------------`);
+        
+        
         const formattedCode = pairingCode.match(/.{1,4}/g).join('-');
-        console.log(`YOUR CODE: ${formattedCode.toUpperCase()}`);
+        console.log(`YOUR CODE IS: [ ${formattedCode.toUpperCase()} ] `);
+        
+        console.log(`------------------------------------------------------`);
+        console.log(`Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
         console.log(`======================================================\n`);
         
     } catch (err) {
-        console.error('Failed to generate pairing code:', err);
+        pairingCodeRequested = false;
+        console.error('❌ Failed to generate pairing code:', err.message);
     }
 });
 
