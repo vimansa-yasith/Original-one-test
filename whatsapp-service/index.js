@@ -11,6 +11,10 @@ let isReady = false;
 
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './session' }),
+  webVersionCache: {
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1014.589-alpha.html'
+  },
   puppeteer: {
     headless: true,
     executablePath: process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -19,12 +23,24 @@ const client = new Client({
 });
 
 // First run: print QR code in terminal — scan with WhatsApp once, never again
-client.on('qr', (qr) => {
-  console.log('\n========================================');
-  console.log('  Scan this QR code with your WhatsApp');
-  console.log('  WhatsApp > Linked Devices > Link a Device');
-  console.log('========================================\n');
-  qrcode.generate(qr, { small: true });
+client.on('qr', async (qr) => {
+  console.log('QR code received, requesting pairing code instead...');
+    
+    try {
+        // add the phone number for pairing
+        const myPhoneNumber = '94719075355'; 
+        
+        const pairingCode = await client.requestPairingCode(myPhoneNumber);
+        
+        console.log(`\n============== WHATSAPP PAIRING CODE ==============`);
+       
+        const formattedCode = pairingCode.match(/.{1,4}/g).join('-');
+        console.log(`YOUR CODE: ${formattedCode.toUpperCase()}`);
+        console.log(`======================================================\n`);
+        
+    } catch (err) {
+        console.error('Failed to generate pairing code:', err);
+    }
 });
 
 client.on('authenticated', () => {
