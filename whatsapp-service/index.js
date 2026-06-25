@@ -1,133 +1,175 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore,
+} = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
-const fs = require('fs'); 
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
 
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
+const SESSION_PATH = './baileys_session';
+const PORT = process.env.PORT || 3001;
+
 let sock = null;
 let isReady = false;
+let pairingRequested = false;
+let reconnectTimer = null;
 
-let pairingTimeout = null;
-const SESSION_PATH = './baileys_session_final_v8'; // 🎯 අලුත්ම පිරිසිදු පාත් එකක්
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function wipeSession() {
+    try {
+        fs.rmSync(SESSION_PATH, { recursive: true, force: true });
+        console.log('🗑️  Session folder wiped.');
+    } catch (e) {
+        console.error('⚠️  Failed to wipe session:', e.message);
+    }
+}
+
+function formatNumber(raw) {
+    let n = raw.replace(/[^0-9]/g, '');
+    if (n.startsWith('0') && n.length === 10) {
+        n = '94' + n.substring(1); // 07x → 947x
+    } else if (!n.startsWith('94') && n.length === 9) {
+        n = '94' + n;              // 7x  → 947x
+    }
+    return n + '@s.whatsapp.net';
+}
+
+// ── Core WhatsApp connector ──────────────────────────────────────────────────
 
 async function connectToWhatsApp() {
-    if (pairingTimeout) clearTimeout(pairingTimeout);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
 
+    const { version } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
 
     sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: false, 
-        browser: ["Ubuntu", "Chrome", "20.0.04"], 
-        logger: pino({ level: 'silent' })
+        version,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+        },
+        printQRInTerminal: false,
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        logger: pino({ level: 'silent' }),
+        syncFullHistory: false,          // avoids heavy sync that triggers ghost sessions
+        markOnlineOnConnect: false,
+        getMessage: async () => undefined, // prevents crash on missing pre-key messages
     });
 
-    if (!sock.authState.creds.registered) {
-        pairingTimeout = setTimeout(async () => {
-            const myPhoneNumber = '94711285796'.replace(/[^0-9]/g, ''); 
+    // ── Request pairing code (only once per fresh session) ──────────────────
+    if (!sock.authState.creds.registered && !pairingRequested) {
+        pairingRequested = true;
+        setTimeout(async () => {
+            const phone = (process.env.WA_PHONE || '94711285796').replace(/[^0-9]/g, '');
             try {
-                console.log(`\n📡 [System] Requesting Pairing Code for: ${myPhoneNumber}`);
-                const code = await sock.requestPairingCode(myPhoneNumber);
-                
-                console.log(`\n======================================================`);
-                console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
-                console.log(`------------------------------------------------------`);
-                const formattedCode = code.match(/.{1,4}/g).join('-');
-                console.log(`👉  YOUR CODE IS: [ ${formattedCode.toUpperCase()} ]  👈`);
-                console.log(`======================================================\n`);
+                console.log(`\n📡 Requesting pairing code for: ${phone}`);
+                const code = await sock.requestPairingCode(phone);
+                const formatted = code.match(/.{1,4}/g).join('-').toUpperCase();
+                console.log('\n══════════════════════════════════════');
+                console.log(`🏆  PAIRING CODE: [ ${formatted} ]`);
+                console.log('══════════════════════════════════════\n');
             } catch (err) {
-                console.log('❌ Code Request Failed:', err.message);
+                console.error('❌ Pairing code request failed:', err.message);
+                pairingRequested = false; // allow retry
             }
-        }, 5000); 
+        }, 5000);
     }
 
+    // ── Connection events ────────────────────────────────────────────────────
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+
+        if (connection === 'open') {
+            isReady = true;
+            pairingRequested = false;
+            console.log('✅ WhatsApp connected and ready.');
+            return;
+        }
 
         if (connection === 'close') {
             isReady = false;
-            if (pairingTimeout) clearTimeout(pairingTimeout);
-            
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            console.log(`⚠️ Connection closed (Status: ${statusCode}).`);
+            console.log(`⚠️  Connection closed — status: ${statusCode}`);
 
-            // 🔥 [REAL FIX] - 405 ආවොත් මුළු සර්වර් එකම Kill කරලා දානවා!
-            if (statusCode === 405 || statusCode === DisconnectReason.connectionReplaced) {
-                console.log('🔄 [System] 405 Detected: Automatically wiping corrupted session files...');
-                try {
-                    fs.rmSync(SESSION_PATH, { recursive: true, force: true });
-                } catch (e) {
-                    console.log('Error wiping session folder:', e.message);
-                }
-                
-                console.log('🛑 [System] FATAL: Shutting down process to kill ghost containers and force a clean Railway restart...');
-                process.exit(1); // 💡 මේකෙන් තමයි පැටලිච්ච සර්වර් ඔක්කොම ක්ලීන් වෙන්නේ!
+            // 405 = connectionReplaced (ghost session / duplicate)
+            if (
+                statusCode === 405 ||
+                statusCode === DisconnectReason.connectionReplaced
+            ) {
+                console.log('🔄 Ghost session detected. Wiping and restarting cleanly...');
+                wipeSession();
+                // Give Railway 15 s to fully kill the old container before restarting.
+                // process.exit(1) signals Railway to redeploy a fresh instance.
+                console.log('🛑 Exiting in 15 s to let Railway clean up old containers...');
+                setTimeout(() => process.exit(1), 15_000);
+                return;
             }
 
-            // සාමාන්‍ය connection drop එකක් නම් විතරක් ආයෙත් ට්‍රයි කරනවා
-            if (statusCode !== 405) {
-                console.log(`⏱️ Reconnecting safely in 10s...`);
-                setTimeout(() => {
-                    connectToWhatsApp(); 
-                }, 10000);
+            // 401 = logged out (user removed device from WhatsApp)
+            if (statusCode === DisconnectReason.loggedOut) {
+                console.log('🔒 Logged out. Wiping session. Re-pair needed.');
+                wipeSession();
+                pairingRequested = false;
+                reconnectTimer = setTimeout(connectToWhatsApp, 5000);
+                return;
             }
-            
-        } else if (connection === 'open') {
-            isReady = true;
-            if (pairingTimeout) clearTimeout(pairingTimeout);
-            console.log('✅ WhatsApp client ready! FlexiWork can now send messages.');
+
+            // All other drops — reconnect after 10 s
+            console.log('⏱️  Reconnecting in 10 s...');
+            reconnectTimer = setTimeout(connectToWhatsApp, 10_000);
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
 }
 
-// ⏱️ Railway එකේ පරණ සර්වර් එක මැරෙන්න තත්පර 3ක වෙලාවක් දීලා අලුත් එක ස්ටාර්ට් කරනවා
-setTimeout(() => {
-    connectToWhatsApp();
-}, 3000);
+// ── Boot (3 s grace for Railway to kill the previous container first) ────────
+setTimeout(connectToWhatsApp, 3000);
 
-// ── REST API (VERIFICATION CODE PART) ──────────────────────────────────────────
+// ── REST API ─────────────────────────────────────────────────────────────────
 
-app.post('/send', async (req, res) => {
+function authMiddleware(req, res, next) {
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
+    next();
+}
+
+// POST /send  — send a verification code (or any message)
+app.post('/send', authMiddleware, async (req, res) => {
     const { to, message } = req.body;
 
     if (!to || !message) {
-        return res.status(400).json({ error: 'Both "to" and "message" are required.' });
+        return res.status(400).json({ error: '"to" and "message" are required.' });
     }
     if (!isReady || !sock) {
-        return res.status(503).json({ error: 'WhatsApp client not ready yet.' });
+        return res.status(503).json({ error: 'WhatsApp client not ready.' });
     }
 
     try {
-        let cleanedNumber = to.replace(/[^0-9]/g, ''); 
-        if (cleanedNumber.startsWith('0')) {
-            cleanedNumber = '94' + cleanedNumber.substring(1); 
-        } else if (!cleanedNumber.startsWith('94') && cleanedNumber.length === 9) {
-            cleanedNumber = '94' + cleanedNumber;
-        }
-
-        const formattedNumber = cleanedNumber + '@s.whatsapp.net';
-        await sock.sendMessage(formattedNumber, { text: message });
-        console.log(`📤 Verification Code successfully sent to: ${cleanedNumber}`);
-        res.json({ success: true });
+        const jid = formatNumber(to);
+        await sock.sendMessage(jid, { text: message });
+        console.log(`📤 Message sent to: ${jid}`);
+        res.json({ success: true, sentTo: jid });
     } catch (err) {
-        console.error(`❌ Failed to send verification code to ${to}:`, err.message);
+        console.error(`❌ Send failed for ${to}:`, err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-app.get('/status', (req, res) => {
+// GET /status — health check
+app.get('/status', (_req, res) => {
     res.json({ ready: isReady });
 });
 
-const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log(`\n🚀 FlexiWork WhatsApp service running on port ${PORT}`);
+    console.log(`\n🚀 FlexiWork WhatsApp service on port ${PORT}`);
 });
