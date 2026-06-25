@@ -25,33 +25,35 @@ const client = new Client({
 let pairingCodeRequested = false;
 
 client.on('qr', async (qr) => {
-  if (pairingCodeRequested) return; 
     
-    console.log('[System] Inside QR event. Canceling terminal QR print...');
-    console.log('[System] Requesting 8-digit Pairing Code from WhatsApp...');
-    
-    try {
+    if (!pairingCodeRequested) {
         pairingCodeRequested = true;
-        const myPhoneNumber = '94719075355'; //phone number
+        console.log('[System] QR received. Waiting 8 seconds for Puppeteer to stabilize...');
         
-        // requesting the code directly from whatsapp
-        const pairingCode = await client.requestPairingCode(myPhoneNumber);
-        
-        console.log(`\n======================================================`);
-        console.log(`WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY`);
-        console.log(`------------------------------------------------------`);
-        
-        
-        const formattedCode = pairingCode.match(/.{1,4}/g).join('-');
-        console.log(`YOUR CODE IS: [ ${formattedCode.toUpperCase()} ] `);
-        
-        console.log(`------------------------------------------------------`);
-        console.log(`Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
-        console.log(`======================================================\n`);
-        
-    } catch (err) {
-        pairingCodeRequested = false;
-        console.error('❌ Failed to generate pairing code:', err.message);
+        // giving 8s for settle puppeteer
+        setTimeout(async () => {
+            console.log('[System] Requesting 8-digit Pairing Code from WhatsApp...');
+            try {
+                const myPhoneNumber = '94719075355'; //phone number
+                const pairingCode = await client.requestPairingCode(myPhoneNumber);
+                
+                console.log(`\n======================================================`);
+                console.log(` WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY `);
+                console.log(`------------------------------------------------------`);
+                
+                const formattedCode = pairingCode.match(/.{1,4}/g).join('-');
+                console.log(`YOUR CODE IS: [ ${formattedCode.toUpperCase()} ] `);
+                
+                console.log(`------------------------------------------------------`);
+                console.log(` Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
+                console.log(`======================================================\n`);
+                
+            } catch (err) {
+                pairingCodeRequested = false;
+                // Error එක සම්පූර්ණයෙන්ම බලාගන්න JSON.stringify එකක් දැම්මා
+                console.error('❌ Failed to generate pairing code:', JSON.stringify(err));
+            }
+        }, 8000); 
     }
 });
 
