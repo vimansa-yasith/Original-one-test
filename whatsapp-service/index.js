@@ -5,9 +5,9 @@ const app = express();
 app.use(express.json());
 
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
-
 let isReady = false;
 
+// 1. Railway එකට සහ Pairing Code වලට ගැලපෙන විදිහට Client එක සෙට් කිරීම
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './session' }),
   webVersionCache: {
@@ -16,54 +16,31 @@ const client = new Client({
   },
   puppeteer: {
     headless: true,
-    executablePath: process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    // 💡 Railway එකේදී environment path එක ගන්නවා, නැත්නම් ලෝකල් එකේදී Chrome එක ගන්නවා
+    executablePath: process.env.CHROME_PATH || undefined, 
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox', 
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--unhandled-rejections=strict'
+    ],
   },
 });
 
-// First run: print QR code in terminal — scan with WhatsApp once, never again
-let pairingCodeRequested = false;
+// 2. ⚠️ QR එක Terminal එකේ අඳින එක සදහටම බ්ලොක් කිරීම
+client.on('qr', (qr) => {
+  // මේක හිස්ව තියන්න මචන්, එතකොට අර කැඩිච්ච QR කොටු ලොග් එකේ වැටෙන්නේ නැහැ
+});
 
-client.on('qr', async (qr) => {
-    
-    if (!pairingCodeRequested) {
-        pairingCodeRequested = true;
-        console.log('[System] QR received. Waiting 8 seconds for Puppeteer to stabilize...');
-        
-        // giving 8s for settle puppeteer
-        setTimeout(async () => {
-            console.log('[System] Requesting 8-digit Pairing Code from WhatsApp...');
-            try {
-                const myPhoneNumber = '94719075355'; //phone number
-                const pairingCode = await client.requestPairingCode(myPhoneNumber);
-                
-                console.log(`\n======================================================`);
-                console.log(` WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY `);
-                console.log(`------------------------------------------------------`);
-                
-                const formattedCode = pairingCode.match(/.{1,4}/g).join('-');
-                console.log(`YOUR CODE IS: [ ${formattedCode.toUpperCase()} ] `);
-                
-                console.log(`------------------------------------------------------`);
-                console.log(` Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
-                console.log(`======================================================\n`);
-                
-            } catch (err) {
-                pairingCodeRequested = false;
-                // Error එක සම්පූර්ණයෙන්ම බලාගන්න JSON.stringify එකක් දැම්මා
-                console.error('❌ Failed to generate pairing code:', JSON.stringify(err));
-            }
-        }, 8000); 
-    }
+// 3. 🚀 බ්‍රවුසර් එක ලෝඩ් වෙලා සර්වර් එක සූදානම් වුණු ගමන් කෙලින්ම Pairing Code එක ඉල්ලීම
+client.on('ready', () => {
+  isReady = true;
+  console.log('✅ WhatsApp client ready. FlexiWork can now send messages.');
 });
 
 client.on('authenticated', () => {
   console.log('✅ WhatsApp authenticated — session saved.');
-});
-
-client.on('ready', () => {
-  isReady = true;
-  console.log('✅ WhatsApp client ready. FlexiWork can now send messages.');
 });
 
 client.on('disconnected', (reason) => {
@@ -71,11 +48,38 @@ client.on('disconnected', (reason) => {
   console.warn('⚠️  WhatsApp disconnected:', reason);
 });
 
+// සර්විස් එක පණ ගැන්වීම
 client.initialize();
+
+// 📡 [ප්‍රධාන උපක්‍රමය] - සර්වර් එක ස්ටාර්ට් වී තත්පර 15කින් කෝඩ් එක එක පාරක් පමණක් ඉල්ලීම
+setTimeout(async () => {
+  if (!isReady) {
+    console.log('\n📡 [System] Initializing WhatsApp Pairing Session...');
+    try {
+      const myPhoneNumber = '94719075355'; // ඔයාගේ WhatsApp නම්බර් එක
+      console.log(`📡 [System] Requesting 8-digit Pairing Code for: ${myPhoneNumber}`);
+      
+      const pairingCode = await client.requestPairingCode(myPhoneNumber);
+      
+      console.log(`\n======================================================`);
+      console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
+      console.log(`------------------------------------------------------`);
+      
+      const formattedCode = pairingCode.match(/.{1,4}/g).join('-');
+      console.log(`👉  YOUR CODE IS: [ ${formattedCode.toUpperCase()} ]  👈`);
+      
+      console.log(`------------------------------------------------------`);
+      console.log(`💡 Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
+      console.log(`======================================================\n`);
+      
+    } catch (err) {
+      console.log('❌ Pairing Code Error Info:', err);
+    }
+  }
+}, 15000); // ⏱️ සර්වර් එකට නිදහසේ ලෝඩ් වෙන්න තත්පර 15ක් දෙනවා
 
 // ── REST API ──────────────────────────────────────────────────────────────────
 
-// POST /send  { to: "+94771234567", message: "Hello" }
 app.post('/send', async (req, res) => {
   if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -86,7 +90,7 @@ app.post('/send', async (req, res) => {
     return res.status(400).json({ error: 'Both "to" and "message" are required.' });
   }
   if (!isReady) {
-    return res.status(503).json({ error: 'WhatsApp client not ready yet. Check terminal for QR code.' });
+    return res.status(503).json({ error: 'WhatsApp client not ready yet.' });
   }
 
   try {
@@ -96,18 +100,13 @@ app.post('/send', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error(`❌ Failed to send to ${to}:`, err.message);
-    // Puppeteer's underlying page/frame died (e.g. the linked WhatsApp
-    // session was invalidated or reused on another machine) — mark not
-    // ready instead of letting every future /send fail the same silent way.
     if (/detached frame|session closed|protocol error/i.test(err.message)) {
       isReady = false;
-      console.error('   WhatsApp session appears dead. Restart this service and re-scan the QR code.');
     }
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /status
 app.get('/status', (req, res) => {
   res.json({ ready: isReady });
 });
