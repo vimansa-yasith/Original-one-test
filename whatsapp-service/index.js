@@ -1,7 +1,6 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
-const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -9,66 +8,43 @@ app.use(express.json());
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
 let sock = null;
 let isReady = false;
-let lastPairingCodeTime = 0; 
 
 async function connectToWhatsApp() {
-    
-    const { state, saveCreds } = await useMultiFileAuthState('./baileys_auth_info');
 
-   
+    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_fresh');
+
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false, 
         logger: pino({ level: 'silent' }),
-        
         browser: ['Ubuntu', 'Chrome', '20.0.04'] 
     });
 
-    
+  
     if (!sock.authState.creds.registered) {
-        const myPhoneNumber = '94711285796'.replace(/[^0-9]/g, ''); 
+        const myPhoneNumber = '94719075355'.replace(/[^0-9]/g, ''); 
         
         setTimeout(async () => {
-            
-            const requestNextCode = async () => {
-                if (isReady) return; 
+            try {
+                console.log(`\n📡 [System] Requesting Fresh Pairing Code for: ${myPhoneNumber}`);
+                const code = await sock.requestPairingCode(myPhoneNumber);
                 
-                const now = Date.now();
-                if (now - lastPairingCodeTime < 45000) return; 
-
-                try {
-                    console.log(`\n📡 [System] Requesting 8-digit Pairing Code for: ${myPhoneNumber}`);
-                    const code = await sock.requestPairingCode(myPhoneNumber);
-                    lastPairingCodeTime = Date.now(); 
-                    
-                    console.log(`\n======================================================`);
-                    console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
-                    console.log(`------------------------------------------------------`);
-                    
-                    const formattedCode = code.match(/.{1,4}/g).join('-');
-                    console.log(`👉  YOUR CODE IS: [ ${formattedCode.toUpperCase()} ]  👈`);
-                    console.log(`------------------------------------------------------`);
-                    console.log(`💡 Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
-                    console.log(`======================================================\n`);
-                } catch (err) {
-                    console.error('❌ Failed to generate pairing code:', err.message);
-                }
-            };
-
-            await requestNextCode();
-
-            const intervalId = setInterval(async () => {
-                if (isReady || sock.authState.creds.registered) {
-                    clearInterval(intervalId); 
-                    return;
-                }
-                await requestNextCode();
-            }, 50000);
-
-        }, 4000);
+                console.log(`\n======================================================`);
+                console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
+                console.log(`------------------------------------------------------`);
+                
+                const formattedCode = code.match(/.{1,4}/g).join('-');
+                console.log(`👉  YOUR CODE IS: [ ${formattedCode.toUpperCase()} ]  👈`);
+                
+                console.log(`------------------------------------------------------`);
+                console.log(`💡 Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
+                console.log(`======================================================\n`);
+            } catch (err) {
+                console.error('❌ Failed to generate pairing code:', err.message);
+            }
+        }, 6000); 
     }
 
-    
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         
@@ -85,11 +61,12 @@ async function connectToWhatsApp() {
         }
     });
 
-    
     sock.ev.on('creds.update', saveCreds);
 }
 
 connectToWhatsApp();
+
+// ── REST API ──────────────────────────────────────────────────────────────────
 
 app.post('/send', async (req, res) => {
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
