@@ -26,7 +26,6 @@ async function connectToWhatsApp() {
 
     
     if (!sock.authState.creds.registered) {
-       ැ
         const myPhoneNumber = '94711285796'.replace(/[^0-9]/g, ''); 
         
         setTimeout(async () => {
