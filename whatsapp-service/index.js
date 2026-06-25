@@ -1,6 +1,7 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const express = require('express');
 const pino = require('pino');
+const fs = require('fs'); // 💡 ෆයිල් සිස්ටම් එක ක්ලීන් කරන්න මේක ඇතුළත් කළා
 
 const app = express();
 app.use(express.json());
@@ -9,27 +10,25 @@ const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me'
 let sock = null;
 let isReady = false;
 
-
 let pairingTimeout = null;
 let reconnectTimeout = null;
+const SESSION_PATH = './baileys_session_v7'; // 🎯 අලුත්ම පිරිසිදු සෙෂන් පාත් එක
 
 async function connectToWhatsApp() {
- 
     if (pairingTimeout) clearTimeout(pairingTimeout);
     if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
-
-    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_v6');
+    const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
 
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false, 
-        browser: ["Ubuntu", "Chrome", "20.0.04"],
+        browser: ["Ubuntu", "Chrome", "20.0.04"], 
         logger: pino({ level: 'silent' })
     });
 
     if (!sock.authState.creds.registered) {
-
+        // ⏱️ තත්පර 4කින් කෝඩ් එක ඉල්ලනවා කනෙක්ෂන් එක ඩ්‍රොප් වෙන්න කලින්
         pairingTimeout = setTimeout(async () => {
             const myPhoneNumber = '94711285796'.replace(/[^0-9]/g, ''); 
             try {
@@ -45,7 +44,7 @@ async function connectToWhatsApp() {
             } catch (err) {
                 console.log('❌ Code Request Failed:', err.message);
             }
-        }, 10000); 
+        }, 4000); 
     }
 
     sock.ev.on('connection.update', (update) => {
@@ -53,20 +52,25 @@ async function connectToWhatsApp() {
 
         if (connection === 'close') {
             isReady = false;
-            
-          
             if (pairingTimeout) clearTimeout(pairingTimeout);
             
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            console.log(`⚠️ Connection closed (Status: ${statusCode}). Reconnecting safely in 12s...`);
-            
-            sock.ev.removeAllListeners('connection.update');
-            sock.ev.removeAllListeners('creds.update');
-            
-         
+            console.log(`⚠️ Connection closed (Status: ${statusCode}).`);
+
+            // 🔥 [REAL FIX] - 405 ආවොත් සැනින් සෙෂන් ෆෝල්ඩර් එක ඔටෝම ක්ලීන් කරලා දානවා!
+            if (statusCode === 405 || statusCode === DisconnectReason.connectionReplaced) {
+                console.log('🔄 [System] 405 Detected: Automatically wiping corrupted session files...');
+                try {
+                    fs.rmSync(SESSION_PATH, { recursive: true, force: true });
+                } catch (e) {
+                    console.log('Error wiping session folder:', e.message);
+                }
+            }
+
+            console.log(`⏱️ Reconnecting safely in 10s...`);
             reconnectTimeout = setTimeout(() => {
                 connectToWhatsApp(); 
-            }, 12000);
+            }, 10000);
         } else if (connection === 'open') {
             isReady = true;
             if (pairingTimeout) clearTimeout(pairingTimeout);
@@ -79,7 +83,7 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// ── REST API ──────────────────────────────────────────────────────────────────
+// ── REST API (VERIFICATION CODE PART) ──────────────────────────────────────────
 
 app.post('/send', async (req, res) => {
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
