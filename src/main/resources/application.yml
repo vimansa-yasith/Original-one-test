@@ -94,8 +94,8 @@ flexiwork:
 
   whatsapp:
     enabled: true
-    service-url: ${WHATSAPP_SERVICE_URL:http://localhost:3001}
-    shared-secret: ${WHATSAPP_SHARED_SECRET:dev-only-change-me}
+    service-url: https://whatsapp-service-production-65c0.up.railway.app
+    shared-secret: dev-only-change-me
 
   otp:
     length: 6
