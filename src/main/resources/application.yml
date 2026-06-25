@@ -3,6 +3,9 @@ spring:
     name: flexiwork
   profiles:
     active: dev
+  servlet:
+    multipart:
+      resolve-lazily: true
 
   datasource:
     url: jdbc:mysql://mysql.railway.internal:3306/railway
