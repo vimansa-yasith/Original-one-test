@@ -146,7 +146,7 @@ public class SecurityConfig {
         // production to the real frontend origin(s).
         config.setAllowedOrigins(List.of(
             "http://localhost:5173",         
-            "frontend-production-201d.up.railway.app"));
+            "https://frontend-production-201d.up.railway.app"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
