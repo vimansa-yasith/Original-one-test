@@ -8,25 +8,26 @@ app.use(express.json());
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
 let sock = null;
 let isReady = false;
+let pairingCodeSent = false; 
 
 async function connectToWhatsApp() {
-
     const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_fresh');
 
     sock = makeWASocket({
         auth: state,
         printQRInTerminal: false, 
-        logger: pino({ level: 'silent' }),
-        browser: ['Ubuntu', 'Chrome', '20.0.04'] 
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
+        logger: pino({ level: 'silent' })
     });
 
   
-    if (!sock.authState.creds.registered) {
+    if (!sock.authState.creds.registered && !pairingCodeSent) {
+        pairingCodeSent = true; 
         const myPhoneNumber = '94719075355'.replace(/[^0-9]/g, ''); 
         
         setTimeout(async () => {
             try {
-                console.log(`\n📡 [System] Requesting Fresh Pairing Code for: ${myPhoneNumber}`);
+                console.log(`\n📡 [System] Requesting Single Pairing Code for: ${myPhoneNumber}`);
                 const code = await sock.requestPairingCode(myPhoneNumber);
                 
                 console.log(`\n======================================================`);
@@ -41,6 +42,7 @@ async function connectToWhatsApp() {
                 console.log(`======================================================\n`);
             } catch (err) {
                 console.error('❌ Failed to generate pairing code:', err.message);
+                pairingCodeSent = false; 
             }
         }, 6000); 
     }
@@ -57,6 +59,7 @@ async function connectToWhatsApp() {
             }
         } else if (connection === 'open') {
             isReady = true;
+            pairingCodeSent = false; 
             console.log('✅ WhatsApp client ready! FlexiWork can now send messages.');
         }
     });
@@ -66,7 +69,7 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-// ── REST API ──────────────────────────────────────────────────────────────────
+
 
 app.post('/send', async (req, res) => {
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
