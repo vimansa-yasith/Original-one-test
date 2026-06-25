@@ -5,14 +5,14 @@ const pino = require('pino');
 const app = express();
 app.use(express.json());
 
-
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
 let sock = null;
 let isReady = false;
 let pairingCodeRequested = false;
 
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_v4');
+    // 💡 අලුත් නම්බර් එකේ පැටලීම් අයින් කරන්න සෙෂන් ෆෝල්ඩර් එක v5 කළා මචන්
+    const { state, saveCreds } = await useMultiFileAuthState('./baileys_session_v5');
 
     sock = makeWASocket({
         auth: state,
@@ -24,6 +24,7 @@ async function connectToWhatsApp() {
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             if (pairingCodeRequested) return;
+            // 🎯 ඔයාගේ අලුත් නම්බර් එක කෝඩ් එකටම පිරිසිදුව දැම්මා
             const myPhoneNumber = '94711285796'.replace(/[^0-9]/g, ''); 
             try {
                 pairingCodeRequested = true;
@@ -68,15 +69,12 @@ async function connectToWhatsApp() {
 
 connectToWhatsApp();
 
-
+// ── REST API ──────────────────────────────────────────────────────────────────
 
 app.post('/send', async (req, res) => {
-    // 1. Security Check
     if (req.header('X-Internal-Secret') !== SHARED_SECRET) {
-        console.log('❌ Unauthorized request attempt to /send');
         return res.status(401).json({ error: 'Unauthorized' });
     }
-    
     const { to, message } = req.body;
 
     if (!to || !message) {
@@ -87,23 +85,16 @@ app.post('/send', async (req, res) => {
     }
 
     try {
-        
-        let cleanedNumber = to.replace(/[^0-9]/g, '');
-        
+        let cleanedNumber = to.replace(/[^0-9]/g, ''); 
         if (cleanedNumber.startsWith('0')) {
-            
             cleanedNumber = '94' + cleanedNumber.substring(1); 
         } else if (!cleanedNumber.startsWith('94') && cleanedNumber.length === 9) {
-            
             cleanedNumber = '94' + cleanedNumber;
         }
 
         const formattedNumber = cleanedNumber + '@s.whatsapp.net';
-        
-       
         await sock.sendMessage(formattedNumber, { text: message });
         console.log(`📤 Verification Code successfully sent to: ${cleanedNumber}`);
-        
         res.json({ success: true });
     } catch (err) {
         console.error(`❌ Failed to send verification code to ${to}:`, err.message);
