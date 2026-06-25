@@ -9,6 +9,7 @@ app.use(express.json());
 const SHARED_SECRET = process.env.WHATSAPP_SHARED_SECRET || 'dev-only-change-me';
 let sock = null;
 let isReady = false;
+let lastPairingCodeTime = 0; 
 
 async function connectToWhatsApp() {
     
@@ -17,7 +18,7 @@ async function connectToWhatsApp() {
    
     sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false, // 
+        printQRInTerminal: false, 
         logger: pino({ level: 'silent' }) 
     });
 
@@ -25,24 +26,47 @@ async function connectToWhatsApp() {
     if (!sock.authState.creds.registered) {
         const myPhoneNumber = '94719075355'; 
         
-        
+       
         setTimeout(async () => {
-            try {
-                console.log(`\n📡 [System] Requesting 8-digit Pairing Code for: ${myPhoneNumber}`);
-                const code = await sock.requestPairingCode(myPhoneNumber);
+            
+            const requestNextCode = async () => {
+                if (isReady) return; 
                 
-                console.log(`\n======================================================`);
-                console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
-                console.log(`------------------------------------------------------`);
-                
-                const formattedCode = code.match(/.{1,4}/g).join('-');
-                console.log(`👉  YOUR CODE IS: [ ${formattedCode.toUpperCase()} ]  👈`);
-                console.log(`------------------------------------------------------`);
-                console.log(`💡 Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
-                console.log(`======================================================\n`);
-            } catch (err) {
-                console.error('❌ Failed to generate pairing code:', err.message);
-            }
+                const now = Date.now();
+               
+                if (now - lastPairingCodeTime < 45000) return; 
+
+                try {
+                    console.log(`\n📡 [System] Requesting 8-digit Pairing Code for: ${myPhoneNumber}`);
+                    const code = await sock.requestPairingCode(myPhoneNumber);
+                    lastPairingCodeTime = Date.now();
+                    
+                    console.log(`\n======================================================`);
+                    console.log(`🏆 WHATSAPP PAIRING CODE GENERATED SUCCESSFULLY 🏆`);
+                    console.log(`------------------------------------------------------`);
+                    
+                    const formattedCode = code.match(/.{1,4}/g).join('-');
+                    console.log(`👉  YOUR CODE IS: [ ${formattedCode.toUpperCase()} ]  👈`);
+                    console.log(`------------------------------------------------------`);
+                    console.log(`💡 Go to WhatsApp -> Linked Devices -> Link with phone number instead`);
+                    console.log(`======================================================\n`);
+                } catch (err) {
+                    console.error('❌ Failed to generate pairing code:', err.message);
+                }
+            };
+
+            
+            await requestNextCode();
+
+           
+            const intervalId = setInterval(async () => {
+                if (isReady || sock.authState.creds.registered) {
+                    clearInterval(intervalId); 
+                    return;
+                }
+                await requestNextCode();
+            }, 50000);
+
         }, 4000);
     }
 
@@ -69,8 +93,6 @@ async function connectToWhatsApp() {
 
 
 connectToWhatsApp();
-
-
 
 
 app.post('/send', async (req, res) => {
