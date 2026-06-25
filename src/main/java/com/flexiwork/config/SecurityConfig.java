@@ -144,7 +144,9 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         // Vite dev server by default; set FLEXIWORK_CORS_ALLOWED_ORIGINS (comma-separated) in
         // production to the real frontend origin(s).
-        config.setAllowedOrigins(List.of(corsAllowedOrigins));
+        config.setAllowedOrigins(List.of(
+            "http://localhost:5173",         
+            "frontend-production-201d.up.railway.app"));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
