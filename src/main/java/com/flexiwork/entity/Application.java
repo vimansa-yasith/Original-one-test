@@ -48,4 +48,7 @@ public class Application extends Auditable {
     /** Set when the 2-hour shift reminder WhatsApp is sent; null means not yet sent. */
     @Column
     private Instant reminderSentAt;
+
+    @Column
+    private String qrCodeUrl;
 }

@@ -1,118 +1,73 @@
 package com.flexiwork.service;
 
+import com.cloudinary.Cloudinary;
+import com.cloudinary.utils.ObjectUtils;
 import com.flexiwork.exception.BusinessException;
-import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.Map;
 import java.util.Set;
 
-/**
- * Stores uploaded files and generated assets (QR codes) on disk under the configured uploads
- * directory, and serves them back as {@link Resource}s. Enforces server-side validation of image
- * uploads (type + size) — a core "beyond CRUD" requirement. Paths are sanitised to prevent
- * traversal outside the uploads root.
- */
 @Service
 public class FileStorageService {
 
     private static final Set<String> IMAGE_TYPES = Set.of("image/jpeg", "image/png");
     private static final Set<String> DOC_TYPES = Set.of("image/jpeg", "image/png", "application/pdf");
-    private static final long MAX_BYTES = 5L * 1024 * 1024; // 5MB
+    private static final long MAX_BYTES = 5L * 1024 * 1024;
 
-    private final Path root;
+    private final Cloudinary cloudinary;
 
-    public FileStorageService(@Value("${flexiwork.uploads.dir}") String dir) {
-        this.root = Paths.get(dir).toAbsolutePath().normalize();
+    public FileStorageService(
+            @Value("${flexiwork.cloudinary.cloud-name}") String cloudName,
+            @Value("${flexiwork.cloudinary.api-key}") String apiKey,
+            @Value("${flexiwork.cloudinary.api-secret}") String apiSecret) {
+        this.cloudinary = new Cloudinary(ObjectUtils.asMap(
+                "cloud_name", cloudName,
+                "api_key", apiKey,
+                "api_secret", apiSecret));
     }
 
-    @PostConstruct
-    void init() {
-        try {
-            Files.createDirectories(root);
-        } catch (IOException e) {
-            throw new IllegalStateException("Could not create uploads directory: " + root, e);
-        }
-    }
-
-    /** Store an image (jpg/png, <=5MB). Returns the relative path stored in the DB. */
     public String storeImage(MultipartFile file, String subDir) {
-        return store(file, subDir, IMAGE_TYPES, "Only JPG/PNG images up to 5MB are allowed");
+        return upload(file, subDir, IMAGE_TYPES, "Only JPG/PNG images up to 5MB are allowed");
     }
 
-    /** Store a document (jpg/png/pdf, <=5MB) such as a BR certificate. */
     public String storeDocument(MultipartFile file, String subDir) {
-        return store(file, subDir, DOC_TYPES, "Only JPG/PNG/PDF files up to 5MB are allowed");
+        return upload(file, subDir, DOC_TYPES, "Only JPG/PNG/PDF files up to 5MB are allowed");
     }
 
-    private String store(MultipartFile file, String subDir, Set<String> allowedTypes, String error) {
-        if (file == null || file.isEmpty()) {
-            throw new BusinessException("File is required");
-        }
-        if (file.getSize() > MAX_BYTES) {
-            throw new BusinessException(error);
-        }
+    private String upload(MultipartFile file, String subDir, Set<String> allowedTypes, String error) {
+        if (file == null || file.isEmpty()) throw new BusinessException("File is required");
+        if (file.getSize() > MAX_BYTES) throw new BusinessException(error);
         String contentType = file.getContentType();
-        if (contentType == null || !allowedTypes.contains(contentType)) {
-            throw new BusinessException(error);
-        }
-        String ext = switch (contentType) {
-            case "image/png" -> ".png";
-            case "application/pdf" -> ".pdf";
-            default -> ".jpg";
-        };
-        String filename = StringUtils.cleanPath(System.currentTimeMillis() + "_"
-                + java.util.UUID.randomUUID().toString().substring(0, 8) + ext);
-        Path target = resolve(subDir).resolve(filename);
+        if (contentType == null || !allowedTypes.contains(contentType)) throw new BusinessException(error);
+
         try {
-            Files.createDirectories(target.getParent());
-            file.transferTo(target);
+            Map result = cloudinary.uploader().upload(file.getBytes(),
+                    ObjectUtils.asMap("folder", "flexiwork/" + subDir));
+            return result.get("secure_url").toString(); // returns the full Cloudinary URL
         } catch (IOException e) {
-            throw new BusinessException("Failed to store file: " + e.getMessage());
+            throw new BusinessException("Failed to upload file: " + e.getMessage());
         }
-        return root.relativize(target).toString().replace('\\', '/');
     }
 
-    /** Persist raw bytes (e.g. a generated QR PNG) at {@code subDir/filename}; returns rel path. */
+    // For QR codes (raw bytes)
     public String storeBytes(byte[] bytes, String subDir, String filename) {
-        Path target = resolve(subDir).resolve(StringUtils.cleanPath(filename));
         try {
-            Files.createDirectories(target.getParent());
-            Files.write(target, bytes);
+            Map result = cloudinary.uploader().upload(bytes,
+                    ObjectUtils.asMap("folder", "flexiwork/" + subDir,
+                            "public_id", filename.replace(".png", ""),
+                            "resource_type", "image"));
+            return result.get("secure_url").toString();
         } catch (IOException e) {
-            throw new BusinessException("Failed to store generated file: " + e.getMessage());
-        }
-        return root.relativize(target).toString().replace('\\', '/');
-    }
-
-    /** Load a stored file as a serveable resource, guarding against path traversal. */
-    public Resource load(String relativePath) {
-        Path file = resolve(relativePath);
-        try {
-            Resource resource = new UrlResource(file.toUri());
-            if (!resource.exists() || !resource.isReadable()) {
-                throw new BusinessException("File not found: " + relativePath);
-            }
-            return resource;
-        } catch (MalformedURLException e) {
-            throw new BusinessException("Invalid file path: " + relativePath);
+            throw new BusinessException("Failed to upload generated file: " + e.getMessage());
         }
     }
 
-    private Path resolve(String relativePath) {
-        Path resolved = root.resolve(relativePath).normalize();
-        if (!resolved.startsWith(root)) {
-            throw new BusinessException("Invalid path");
-        }
-        return resolved;
+    // No longer needed but kept so nothing breaks
+    public org.springframework.core.io.Resource load(String relativePath) {
+        throw new BusinessException("Files are now stored on Cloudinary. Use the URL directly.");
     }
 }

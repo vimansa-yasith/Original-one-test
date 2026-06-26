@@ -191,7 +191,8 @@ public class ApplicationService {
         }
         application.setStatus(ApplicationStatus.ACCEPTED);
         application.setQrCodeToken(UUID.randomUUID().toString());
-        qrService.generateAndStore(application.getQrCodeToken());
+        String qrUrl = qrService.generateAndStore(application.getQrCodeToken());
+        application.setQrCodeUrl(qrUrl); // save Cloudinary URL
         application = applicationRepository.save(application);
 
         job.setWorkersAccepted(job.getWorkersAccepted() + 1);
@@ -240,7 +241,7 @@ public class ApplicationService {
     private ApplicationResponse toResponse(Application a) {
         JobPost job = a.getJobPost();
         String token = a.getQrCodeToken();
-        String qrUrl = token != null ? "/api/files/qr/" + token + ".png" : null;
+        String qrUrl = a.getQrCodeUrl(); // use stored Cloudinary URL directly
         return new ApplicationResponse(
                 a.getId(),
                 a.getStatus(),
